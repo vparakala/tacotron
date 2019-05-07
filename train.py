@@ -54,13 +54,16 @@ def train(log_dir, args):
   # Set up DataFeeder:
   coord = tf.train.Coordinator()
   with tf.variable_scope('datafeeder') as scope:
-    feeder = DataFeeder(coord, input_path, hparams)
+    feeder = DataFeeder(coord, input_path, hparams, (args.num_speakers > 1))
 
   # Set up model:
   global_step = tf.Variable(0, name='global_step', trainable=False)
   with tf.variable_scope('model') as scope:
     model = create_model(args.model, hparams)
-    model.initialize(feeder.inputs, feeder.input_lengths, feeder.mel_targets, feeder.linear_targets)
+    if args.num_speakers > 1:
+        model.initialize(feeder.inputs, feeder.input_lengths, args.num_speakers, feeder.mel_targets, feeder.linear_targets, feeder.speaker_ids)
+    else:
+        model.initialize(feeder.inputs, feeder.input_lengths, args.num_speakers, feeder.mel_targets, feeder.linear_targets)
     model.add_loss()
     model.add_optimizer(global_step)
     stats = add_stats(model)
@@ -124,8 +127,8 @@ def train(log_dir, args):
 
 def main():
   parser = argparse.ArgumentParser()
-  parser.add_argument('--base_dir', default=os.path.expanduser('~/tacotron'))
-  parser.add_argument('--input', default='training/train.txt')
+  parser.add_argument('--base_dir', default=os.path.expanduser('~/vparakala/tacotron'))
+  parser.add_argument('--input', default='vctk-data/training/train.txt')
   parser.add_argument('--model', default='tacotron')
   parser.add_argument('--name', help='Name of the run. Used for logging. Defaults to model name.')
   parser.add_argument('--hparams', default='',
@@ -135,9 +138,11 @@ def main():
     help='Steps between running summary ops.')
   parser.add_argument('--checkpoint_interval', type=int, default=1000,
     help='Steps between writing checkpoints.')
+  parser.add_argument('--num_speakers', type=int, default=1)
   parser.add_argument('--slack_url', help='Slack webhook URL to get periodic reports.')
   parser.add_argument('--tf_log_level', type=int, default=1, help='Tensorflow C++ log level.')
   parser.add_argument('--git', action='store_true', help='If set, verify that the client is clean.')
+
   args = parser.parse_args()
   os.environ['TF_CPP_MIN_LOG_LEVEL'] = str(args.tf_log_level)
   run_name = args.name or args.model

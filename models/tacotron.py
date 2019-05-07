@@ -4,7 +4,7 @@ from tensorflow.contrib.seq2seq import BasicDecoder, BahdanauAttention, Attentio
 from text.symbols import symbols
 from util.infolog import log
 from .helpers import TacoTestHelper, TacoTrainingHelper
-from .modules import encoder_cbhg, post_cbhg, prenet
+from .modules import encoder_cbhg, post_cbhg, prenet, embed_lstm
 from .rnn_wrappers import DecoderPrenetWrapper, ConcatOutputAndAttentionWrapper
 
 
@@ -14,7 +14,7 @@ class Tacotron():
     self._hparams = hparams
 
 
-  def initialize(self, inputs, input_lengths, mel_targets=None, linear_targets=None):
+  def initialize(self, inputs, input_lengths, num_speakers, mel_targets=None, linear_targets=None, speaker_ids=None):
     '''Initializes the model for inference.
 
     Sets "mel_outputs", "linear_outputs", and "alignments" fields.
@@ -47,6 +47,19 @@ class Tacotron():
       encoder_outputs = encoder_cbhg(prenet_outputs, input_lengths, is_training, # [N, T_in, encoder_depth=256]
                                      hp.encoder_depth)
 
+      #Speaker Embedding
+      if speaker_ids is not None:
+          speaker_embed_table = tf.get_variable('speaker_embedding', [self.num_speakers, hp.speaker_embed_depth], dtype=tf.float32,
+                  initializer=tf.truncated_normal_initializer(stddev=0.5))
+          speaker_embeddings = tf.nn.embedding_lookup(speaker_embed_table, speaker_ids)
+          tf.summary.histogram('speaker_embeddings', speaker_embeddings)
+      elif hp.speaker_embeddings:
+          outputs, state  = embed_lstm(mel_targets, hp.speaker_embed_depth, hp.speaker_embed_stack)
+          speaker_embeddings = tf.nn.l2_normalize(outputs[:,-1,:])
+          tf.summary.histogram('speaker_embeddings', speaker_embeddings)
+      else:
+          speaker_embeddings = None
+
       # Attention
       attention_cell = AttentionWrapper(
         GRUCell(hp.attention_depth),
@@ -55,10 +68,10 @@ class Tacotron():
         output_attention=False)                                                  # [N, T_in, attention_depth=256]
       
       # Apply prenet before concatenation in AttentionWrapper.
-      attention_cell = DecoderPrenetWrapper(attention_cell, is_training, hp.prenet_depths)
+      attention_cell = DecoderPrenetWrapper(attention_cell, is_training, hp.prenet_depths, embed_to_concat=speaker_embeddings)
 
       # Concatenate attention context vector and RNN cell output into a 2*attention_depth=512D vector.
-      concat_cell = ConcatOutputAndAttentionWrapper(attention_cell)              # [N, T_in, 2*attention_depth=512]
+      concat_cell = ConcatOutputAndAttentionWrapper(attention_cell, embed_to_concat=speaker_embeddings)              # [N, T_in, 2*attention_depth=512]
 
       # Decoder (layers specified bottom to top):
       decoder_cell = MultiRNNCell([

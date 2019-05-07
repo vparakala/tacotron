@@ -105,3 +105,15 @@ def conv1d(inputs, kernel_size, channels, activation, is_training, scope):
       activation=activation,
       padding='same')
     return tf.layers.batch_normalization(conv1d_output, training=is_training)
+
+def embed_lstm_stack(depth, stack):
+    lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(depth)
+    return tf.nn.rnn_cell.MultiRNNCell([tf.nn.rnn_cell.BasicLSTMCell(depth) for _ in range(stack)])
+
+def embed_lstm(inputs, depth, stack):
+    log_inp = tf.log(inputs + tf.constant(1e-10))
+    lstm_stacked_cells = embed_lstm_stack(depth, stack)
+    return tf.nn.dynamic_rnn(lstm_stacked_cells, log_inp, dtype=tf.float32)
+
+
+    

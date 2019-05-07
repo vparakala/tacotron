@@ -25,6 +25,9 @@ hparams = tf.contrib.training.HParams(
   postnet_depth=256,
   attention_depth=256,
   decoder_depth=256,
+  speaker_embeddings=False,
+  speaker_embed_depth=256,
+  speaker_embed_stack=3,
 
   # Training:
   batch_size=32,

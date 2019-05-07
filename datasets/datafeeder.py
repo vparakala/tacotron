@@ -17,12 +17,13 @@ _pad = 0
 class DataFeeder(threading.Thread):
   '''Feeds batches of data into a queue on a background thread.'''
 
-  def __init__(self, coordinator, metadata_filename, hparams):
+  def __init__(self, coordinator, metadata_filename, hparams, multi_speaker=False):
     super(DataFeeder, self).__init__()
     self._coord = coordinator
     self._hparams = hparams
     self._cleaner_names = [x.strip() for x in hparams.cleaners.split(',')]
     self._offset = 0
+    self._multi_speaker = multi_speaker 
 
     # Load metadata:
     self._datadir = os.path.dirname(metadata_filename)
@@ -40,14 +41,26 @@ class DataFeeder(threading.Thread):
       tf.placeholder(tf.float32, [None, None, hparams.num_freq], 'linear_targets')
     ]
 
+    if self._multi_speaker:
+        self._placeholders.append(tf.placeholder(tf.int32, [None], 'speaker_ids'))
+
     # Create queue for buffering data:
-    queue = tf.FIFOQueue(8, [tf.int32, tf.int32, tf.float32, tf.float32], name='input_queue')
+    if self._multi_speaker:
+        queue = tf.FIFOQueue(8, [tf.int32, tf.int32, tf.float32, tf.float32, tf.int32], name='input_queue')
+    else:
+        queue = tf.FIFOQueue(8, [tf.int32, tf.int32, tf.float32, tf.float32], name='input_queue')
     self._enqueue_op = queue.enqueue(self._placeholders)
-    self.inputs, self.input_lengths, self.mel_targets, self.linear_targets = queue.dequeue()
+    if self._multi_speaker:
+        self.inputs, self.input_lengths, self.mel_targets, self.linear_targets, self.speaker_ids = queue.dequeue()
+    else:
+        self.inputs, self.input_lengths, self.mel_targets, self.linear_targets = queue.dequeue()
+
     self.inputs.set_shape(self._placeholders[0].shape)
     self.input_lengths.set_shape(self._placeholders[1].shape)
     self.mel_targets.set_shape(self._placeholders[2].shape)
     self.linear_targets.set_shape(self._placeholders[3].shape)
+    if self._multi_speaker:
+        self.speaker_ids.set_shape(self._placeholders[4].shape)
 
     # Load CMUDict: If enabled, this will randomly substitute some words in the training data with
     # their ARPABet equivalents, which will allow you to also pass ARPABet to the model for
@@ -92,7 +105,7 @@ class DataFeeder(threading.Thread):
 
     log('Generated %d batches of size %d in %.03f sec' % (len(batches), n, time.time() - start))
     for batch in batches:
-      feed_dict = dict(zip(self._placeholders, _prepare_batch(batch, r)))
+      feed_dict = dict(zip(self._placeholders, _prepare_batch(batch, r, self._multi_speaker)))
       self._session.run(self._enqueue_op, feed_dict=feed_dict)
 
 
@@ -111,20 +124,27 @@ class DataFeeder(threading.Thread):
     input_data = np.asarray(text_to_sequence(text, self._cleaner_names), dtype=np.int32)
     linear_target = np.load(os.path.join(self._datadir, meta[0]))
     mel_target = np.load(os.path.join(self._datadir, meta[1]))
-    return (input_data, mel_target, linear_target, len(linear_target))
+    if self._multi_speaker:
+        speaker_id = int(meta[4])
+        return (input_data, mel_target, linear_target, speaker_id, len(linear_target))
 
+    return (input_data, mel_target, linear_target, len(linear_target))
 
   def _maybe_get_arpabet(self, word):
     arpabet = self._cmudict.lookup(word)
     return '{%s}' % arpabet[0] if arpabet is not None and random.random() < 0.5 else word
 
 
-def _prepare_batch(batch, outputs_per_step):
+def _prepare_batch(batch, outputs_per_step, multi_speaker=False):
   random.shuffle(batch)
   inputs = _prepare_inputs([x[0] for x in batch])
   input_lengths = np.asarray([len(x[0]) for x in batch], dtype=np.int32)
   mel_targets = _prepare_targets([x[1] for x in batch], outputs_per_step)
   linear_targets = _prepare_targets([x[2] for x in batch], outputs_per_step)
+  if multi_speaker:
+      speakers_ids = np.asarray([x[3] for x in batch], dtype=np.int32)
+      return (inputs, input_lengths, mel_targets, linear_targets, speaker_ids)
+
   return (inputs, input_lengths, mel_targets, linear_targets)
 
 
